@@ -1,0 +1,38 @@
+{
+  "name": "baja-lite-axios",
+  "version": "1.0.0",
+  "description": "some util for self",
+  "homepage": "https://github.com/void-soul/util-man",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/void-soul/util-man.git"
+  },
+  "license": "MIT",
+  "author": "void-soul",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "types": "./index.d.ts",
+  "models": "./index.js",
+  "scripts": {
+    "dist": "node ./ci.js"
+  },
+  "peerDependencies": {
+    "axios": "1.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.12",
+    "shelljs": "0.10.0",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

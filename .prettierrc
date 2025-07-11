@@ -1,0 +1,9 @@
+{
+  "singleQuote": true,
+    "trailingComma": "none",
+    "semi": true,
+    "printWidth": 9999,
+    "proseWrap": "never",
+    "plugins": ["prettier-plugin-jsdoc"],
+    "jsdocCommentLineStrategy": "multiline"
+  }
