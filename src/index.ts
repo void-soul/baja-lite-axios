@@ -1,20 +1,28 @@
-import axios, { AxiosInstance, type AxiosResponse } from 'axios';
+import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
 const GlobalAxiosOption = Symbol('GlobalAxiosOption');
 const axiosInstance = Symbol('axiosInstance');
 const requestManager = Symbol('requestManager');
 const sleep = (time = parseInt(`${Math.random()}`) + 200) => new Promise((resolve) => setTimeout(resolve, time));
 interface BajaElementOptions {
-  getToken: () => string;
-  tokenName: string;
+  /** 获取客户端TOKEN的方法 */
+  getToken?: () => string;
+  /** TOKEN在headers中的参数名称 */
+  tokenName?: string;
+  /** 401错误发生时? */
   on401: () => void;
-  onError: (message: string) => void;
+  /** 常规错误时 */
+  onError: (message: any) => { status: number; message: string };
+  /** 加载 */
   loading: {
     start: (loading?: Record<string, any>) => void;
     end: () => void;
   };
   baseUrl: string;
+  /** URL改造 */
   transformUrl?: (url: string) => string;
+  /** 请求是否成功?可抛异常 */
   ifSuccess: <ResponseData, ReqDataType>(response: AxiosResponse<ResponseData, ReqDataType>) => void;
+  /** response中获取数据的方法 */
   readData: <ResponseData, ReqDataType>(response: AxiosResponse<ResponseData, ReqDataType>) => ResponseData;
 }
 interface CacheItem<T = any> {
@@ -44,15 +52,6 @@ class RequestManager {
     this.defaultTTL = defaultTTL;
   }
 
-  handelExcption({ message = '', status = 500, url = '' } = {}) {
-    message = `${message} <br/> <b>Request</b>: ${url} <br/> <b>Server status</b>: ${status}`;
-    (globalThis[GlobalAxiosOption] as BajaElementOptions).onError(message);
-    if (status === 401) {
-      (globalThis[GlobalAxiosOption] as BajaElementOptions).on401();
-    }
-    return { status, message };
-  };
-
   // 执行请求（包含缓存和防重复提交逻辑）
   async execute<ResDataType, ReqDataType>
     (
@@ -69,6 +68,10 @@ class RequestManager {
       }
     ): Promise<ResDataType> {
 
+
+    if ((globalThis[GlobalAxiosOption] as BajaElementOptions).transformUrl) {
+      url = (globalThis[GlobalAxiosOption] as BajaElementOptions).transformUrl!(url);
+    }
 
     const requestKey = [
       url,
@@ -119,14 +122,14 @@ class RequestManager {
         );
         break;
       case 'GET':
-        instance.get<
+        requestFn = instance.get<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType
         >(url, { params: options?.params });
         break;
       case 'DELETE':
-        instance.get<
+        requestFn = instance.delete<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType
@@ -146,11 +149,11 @@ class RequestManager {
       }
       return ret;
     }).catch(e => {
-      if (e.message?.startsWith('Network Error')) {
-        throw this.handelExcption({ message: e.message, status: -1, url });
-      } else {
-        throw e;
+      const es = (globalThis[GlobalAxiosOption] as BajaElementOptions).onError(e);
+      if (es.status === 401) {
+        (globalThis[GlobalAxiosOption] as BajaElementOptions).on401();
       }
+      throw es;
     }).finally(() => {
       // 请求完成后清理pending状态
       this.pendingMap.delete(requestKey);
@@ -247,7 +250,8 @@ class RequestManager {
     return deletedCount;
   }
 }
-if (!globalThis[axiosInstance]) {
+export function SetUp(bajaConfig: BajaElementOptions) {
+  globalThis[GlobalAxiosOption] = bajaConfig;
   const instance = axios.create({
     baseURL: (globalThis[GlobalAxiosOption] as BajaElementOptions).baseUrl,
     responseType: 'json',
@@ -260,9 +264,11 @@ if (!globalThis[axiosInstance]) {
   });
   instance.interceptors.request.use(
     async config => {
-      const token = (globalThis[GlobalAxiosOption] as BajaElementOptions).getToken();
-      if (token) {
-        config.headers[(globalThis[GlobalAxiosOption] as BajaElementOptions).tokenName] = token;
+      if ((globalThis[GlobalAxiosOption] as BajaElementOptions).getToken) {
+        const token = (globalThis[GlobalAxiosOption] as BajaElementOptions).getToken!();
+        if (token) {
+          config.headers[(globalThis[GlobalAxiosOption] as BajaElementOptions).tokenName ?? 'devid'] = token;
+        }
       }
       await sleep(100);
       return config;
@@ -274,57 +280,52 @@ if (!globalThis[axiosInstance]) {
     error => Promise.reject(error)
   );
   globalThis[axiosInstance] = instance;
-}
-if (!globalThis[requestManager]) {
   // 创建请求管理器实例
   globalThis[requestManager] = new RequestManager();
   // 定期清理过期缓存（每10秒钟执行一次）
   setInterval(() => (globalThis[requestManager] as RequestManager).cleanup(), 10 * 1000);
 }
-export function SetUp(bajaConfig: BajaElementOptions) {
-  globalThis[GlobalAxiosOption] = bajaConfig;
-}
-export const $ = {
-  $post: async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options),
-  $get: async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'GET', options),
-  $delete: async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'DELETE', options),
-  $put: async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'PUT', options),
-  $query: async <ResDataType = any, ReqDataType = Record<string, any>>(sqlCode: string, options?: RequestOption<ReqDataType>): Promise<ResDataType[]> => {
-    const res = await (globalThis[requestManager] as RequestManager).execute<{
-      records: ResDataType[];
-      size: number;
-      sum: Record<keyof ResDataType, number>;
-      total: number;
-    }, ReqDataType>('/query.json', 'POST', {
-      params: { ...options?.params, sqlCode } as ReqDataType,
-      cache: options?.cache,
-      loading: options?.loading
-    });
-    return res.records;
-  },
-  $upload: async <ResDataType = any, ReqDataType = Record<string, any>>(
-    url: string,
-    options: {
-      data?: Record<string, any>;
-      file: Blob;
-      fileParamName: string;
-      fileName?: string;
-      loading?: Record<string, any>;
-    }
-  ): Promise<ResDataType> => {
-    const formData = new FormData();
-    formData.append(options.fileParamName, options.file, options.fileName);
-    if (options.data) {
-      // eslint-disable-next-line guard-for-in
-      for (const key in options.data) {
-        formData.append(key, options.data[key]);
-      }
-    }
-    return await (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options, {
-      formData,
-      headers: { 'Content-Type': 'multipart/form-data' }
-    });
+export const $post = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options);
+export const $get = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'GET', options);
+export const $delete = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'DELETE', options);
+export const $put = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'PUT', options);
+export const $query = async <ResDataType = any, ReqDataType = Record<string, any>>(sqlCode: string, options?: RequestOption<ReqDataType>): Promise<ResDataType[]> => {
+  const res = await (globalThis[requestManager] as RequestManager).execute<{
+    records: ResDataType[];
+    size: number;
+    sum: Record<keyof ResDataType, number>;
+    total: number;
+  }, ReqDataType>('/query.json', 'POST', {
+    params: {
+      ...options?.params, sqlCode, params: options?.params
+    } as ReqDataType,
+    cache: options?.cache,
+    loading: options?.loading
+  });
+  return res.records;
+};
+export const $upload = async <ResDataType = any, ReqDataType = Record<string, any>>(
+  url: string,
+  options: {
+    data?: Record<string, any>;
+    file: Blob;
+    fileParamName: string;
+    fileName?: string;
+    loading?: Record<string, any>;
   }
+): Promise<ResDataType> => {
+  const formData = new FormData();
+  formData.append(options.fileParamName, options.file, options.fileName);
+  if (options.data) {
+    // eslint-disable-next-line guard-for-in
+    for (const key in options.data) {
+      formData.append(key, options.data[key]);
+    }
+  }
+  return await (globalThis[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options, {
+    formData,
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
 };
 export const $cache = {
   // 清空所有缓存
