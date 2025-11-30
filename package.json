@@ -21,13 +21,11 @@
   "scripts": {
     "dist": "node ./ci.js"
   },
-  "peerDependencies": {
-    "axios": "1.10.0"
-  },
   "devDependencies": {
-    "@types/node": "24.0.13",
+    "axios": "1.13.2",
+    "@types/node": "24.10.1",
     "shelljs": "0.10.0",
-    "typescript": "5.8.3"
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": ">=20"

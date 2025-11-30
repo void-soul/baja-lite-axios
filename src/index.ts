@@ -3,6 +3,8 @@ const GlobalAxiosOption = Symbol('GlobalAxiosOption');
 const axiosInstance = Symbol('axiosInstance');
 const requestManager = Symbol('requestManager');
 
+//TODO
+// 多实例！
 
 const sleep = (time = parseInt(`${Math.random()}`) + 200) => new Promise((resolve) => setTimeout(resolve, time));
 interface BajaElementOptions {
