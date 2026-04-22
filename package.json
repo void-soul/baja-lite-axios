@@ -1,6 +1,6 @@
 {
   "name": "baja-lite-axios",
-  "version": "2.0.1",
+  "version": "3.0.2",
   "description": "some util for self",
   "homepage": "https://github.com/void-soul/baja-lite-axios",
   "repository": {
@@ -22,7 +22,7 @@
     "dist": "node ./ci.js"
   },
   "devDependencies": {
-    "axios": "1.13.4",
+    "axios": "1.14.0",
     "@types/node": "25.0.10",
     "shelljs": "0.10.0",
     "typescript": "5.9.3"

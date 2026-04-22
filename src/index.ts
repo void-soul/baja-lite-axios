@@ -1,13 +1,6 @@
 import axios, { type AxiosInstance, type AxiosResponse } from 'axios';
-const GlobalAxiosOption = Symbol('GlobalAxiosOption');
-const axiosInstance = Symbol('axiosInstance');
-const requestManager = Symbol('requestManager');
-
-//TODO
-// 多实例！
-
-const sleep = (time = parseInt(`${Math.random()}`) + 200) => new Promise((resolve) => setTimeout(resolve, time));
-interface BajaElementOptions {
+const sleep = (time = Math.floor(Math.random() * 100) + 200) => new Promise((resolve) => setTimeout(resolve, time));
+export interface BajaElementOptions {
   /** 获取客户端TOKEN的方法 */
   getToken?: () => string;
   /** TOKEN在headers中的参数名称,默认devid */
@@ -139,21 +132,21 @@ interface BajaElementOptions {
    * ```
    * #### 例2：
    * ```
-   readData: <ResponseData, ReqDataType>(response: AxiosResponse<ResponseData, ReqDataType>) => response.data
+  readData: <ResponseData, ReqDataType>(response: AxiosResponse<ResponseData, ReqDataType>) => response.data
    * ```
    * */
   readData: <ResponseData, ReqDataType>(response: AxiosResponse<ResponseData, ReqDataType>) => ResponseData;
 }
-interface CacheItem<T = any> {
+export interface CacheItem<T = any> {
   data: T;
   timestamp: number;
   expireTime: number;
 }
-interface CacheConfig {
+export interface CacheConfig {
   ttl?: number; // 缓存生存时间（毫秒），默认5分钟
   maxSize?: number; // 最大缓存条目数，默认100
 }
-interface RequestOption<ReqDataType> {
+export interface RequestOption<ReqDataType> {
   /** 提交参数  */
   params?: ReqDataType;
   /** 请求缓存,如果设置则请求会进行缓存和限流 */
@@ -161,13 +154,33 @@ interface RequestOption<ReqDataType> {
   /** 请求loading,将传递给SETUP的loading */
   loading?: Record<string, any>;
 }
+export interface SSEOptions {
+  url: string;
+  params?: Record<string, any>;
+  onMessage: (event: MessageEvent) => void;
+  onError?: (event: Event) => void;
+  onOpen?: (event: Event) => void;
+  onClose?: () => void;
+  withToken?: boolean;
+}
+export interface UploadOption {
+  data?: Record<string, any>;
+  file: Blob;
+  fileParamName: string;
+  fileName?: string;
+  loading?: Record<string, any>;
+}
 class RequestManager {
   private pendingMap: Map<string, Promise<any>>;
   private maxSize: number;
   private defaultTTL: number;
   private cacheMap: Map<string, CacheItem>;
+  private options: BajaElementOptions;
+  private instance: AxiosInstance;
 
-  constructor(maxSize = 100, defaultTTL = 5 * 60 * 1000) {
+  constructor(options: BajaElementOptions, instance: AxiosInstance, maxSize = 100, defaultTTL = 5 * 60 * 1000) {
+    this.options = options;
+    this.instance = instance;
     this.pendingMap = new Map();
     this.cacheMap = new Map();
     this.maxSize = maxSize;
@@ -190,18 +203,15 @@ class RequestManager {
       }
     ): Promise<ResDataType> {
 
-    if (((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).transformUrl) {
-      url = ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).transformUrl!(url);
+    if (this.options.transformUrl) {
+      url = this.options.transformUrl(url);
     }
 
     const requestKey = [
       url,
       method,
       JSON.stringify(options?.params ?? {})
-    ].join('&').replace(/"|\\/g, '');
-
-
-    ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).loading.start(options?.loading);
+    ].join('&');
 
     // 1. 检查缓存
     if (options?.cache) {
@@ -216,12 +226,13 @@ class RequestManager {
       return this.pendingMap.get(requestKey) as Promise<ResDataType>;
     }
 
+    this.options.loading.start(options?.loading);
+
     // 3. 创建新的请求Promise
     let requestFn: Promise<AxiosResponse<ResDataType, ReqDataType>> | undefined = undefined;
-    const instance = (globalThis as any)[axiosInstance] as AxiosInstance;
     switch (method) {
       case 'POST':
-        requestFn = instance.post<
+        requestFn = this.instance.post<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType | FormData
@@ -232,7 +243,7 @@ class RequestManager {
         );
         break;
       case 'PUT':
-        requestFn = instance.put<
+        requestFn = this.instance.put<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType | FormData
@@ -243,14 +254,14 @@ class RequestManager {
         );
         break;
       case 'GET':
-        requestFn = instance.get<
+        requestFn = this.instance.get<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType
         >(url, { params: options?.params });
         break;
       case 'DELETE':
-        requestFn = instance.delete<
+        requestFn = this.instance.delete<
           ResDataType,
           AxiosResponse<ResDataType, ReqDataType>,
           ReqDataType
@@ -261,8 +272,8 @@ class RequestManager {
     const requestPromise = requestFn?.then(response => {
       let ret: ResDataType | undefined;
 
-      ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).ifSuccess(response);
-      ret = ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).readData<ResDataType, ReqDataType>(response);
+      this.options.ifSuccess(response);
+      ret = this.options.readData<ResDataType, ReqDataType>(response);
 
       // 请求成功后设置缓存
       if (options?.cache) {
@@ -270,15 +281,15 @@ class RequestManager {
       }
       return ret;
     }).catch(e => {
-      const es = ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).onError(e);
+      const es = this.options.onError(e);
       if (es.status === 401) {
-        ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).on401();
+        this.options.on401();
       }
       throw es;
     }).finally(() => {
       // 请求完成后清理pending状态
       this.pendingMap.delete(requestKey);
-      ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).loading.end();
+      this.options.loading.end();
     });
 
     // 4. 将请求Promise存储到pendingMap中
@@ -299,11 +310,6 @@ class RequestManager {
     };
   }
 
-  // 生成缓存键
-  generateCacheKey(url: string, method: string, params?: any, data?: any): string {
-    return [url, method, JSON.stringify(params || {}), JSON.stringify(data || {})].join('&').replace(/"|\\/g, '');
-  }
-
   // 获取缓存
   get<T>(key: string): T | null {
     const item = this.cacheMap.get(key);
@@ -320,7 +326,7 @@ class RequestManager {
 
   // 设置缓存
   set<T>(key: string, data: T, ttl?: number): void {
-    const expireTime = Date.now() + (ttl || this.defaultTTL);
+    const expireTime = Date.now() + (ttl ?? this.defaultTTL);
 
     // 如果缓存已满，删除最旧的条目
     if (this.cacheMap.size >= this.maxSize) {
@@ -371,145 +377,185 @@ class RequestManager {
     return deletedCount;
   }
 }
-export function SetUp(bajaConfig: BajaElementOptions) {
-  // 将BajaElementOptions赋值给全局变量GlobalAxiosOption
-  (globalThis as any)[GlobalAxiosOption] = bajaConfig;
-  // 创建axios实例
-  const instance = axios.create({
-    // 设置基础URL
-    baseURL: ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).baseUrl,
-    // 设置响应类型为json
-    responseType: 'json',
-    // 设置是否携带cookie
-    // 设置请求头
-    withCredentials: true,
-    headers: {
-      'Content-Type': 'application/json;charset=utf-8',
-      Accept: 'application/json'
-    },
-    proxy: false
-  });
-  instance.interceptors.request.use(
-    async config => {
-      if (((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).getToken) {
-        const token = ((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).getToken!();
-        if (token) {
-          config.headers[((globalThis as any)[GlobalAxiosOption] as BajaElementOptions).tokenName ?? 'devid'] = token;
+let defaultInstance: BajaAxio | null = null;
+function getDefaultInstance(): BajaAxio {
+  if (!defaultInstance) {
+    throw new Error('BajaAxio has not been initialized. Please call SetUp() first.');
+  }
+  return defaultInstance;
+}
+export class BajaAxio {
+  private options: BajaElementOptions;
+  private instance: AxiosInstance;
+  private manager: RequestManager;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(bajaConfig: BajaElementOptions) {
+    this.options = bajaConfig;
+    // 创建axios实例
+    this.instance = axios.create({
+      baseURL: bajaConfig.baseUrl,
+      responseType: 'json',
+      withCredentials: true,
+      headers: {
+        'Content-Type': 'application/json;charset=utf-8',
+        Accept: 'application/json'
+      },
+      proxy: false
+    });
+    this.instance.interceptors.request.use(
+      async config => {
+        if (this.options.getToken) {
+          const token = this.options.getToken();
+          if (token) {
+            config.headers[this.options.tokenName ?? 'devid'] = token;
+          }
         }
+        await sleep(100);
+        return config;
+      },
+      error => Promise.reject(error)
+    );
+    this.instance.interceptors.response.use(
+      response => response,
+      error => Promise.reject(error)
+    );
+    // 创建请求管理器实例
+    this.manager = new RequestManager(this.options, this.instance);
+    // 定期清理过期缓存（每10秒钟执行一次）
+    this.cleanupTimer = setInterval(() => this.manager.cleanup(), 10 * 1000);
+  }
+
+  /** 获取底层 axios 实例 */
+  getAxiosInstance(): AxiosInstance {
+    return this.instance;
+  }
+
+  /** 获取配置项 */
+  getOptions(): BajaElementOptions {
+    return this.options;
+  }
+
+  /** 销毁实例，清理定时器 */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.manager.clear();
+    this.manager.clearPending();
+  }
+
+  async $post<ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> {
+    return this.manager.execute<ResDataType, ReqDataType>(url, 'POST', options);
+  }
+
+  async $get<ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> {
+    return this.manager.execute<ResDataType, ReqDataType>(url, 'GET', options);
+  }
+
+  async $delete<ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> {
+    return this.manager.execute<ResDataType, ReqDataType>(url, 'DELETE', options);
+  }
+
+  async $put<ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> {
+    return this.manager.execute<ResDataType, ReqDataType>(url, 'PUT', options);
+  }
+
+  async $query<ResDataType = any, ReqDataType = Record<string, any>>(sqlCode: string, options?: RequestOption<ReqDataType>): Promise<ResDataType[]> {
+    const res = await this.manager.execute<{
+      records: ResDataType[];
+      size: number;
+      sum: Record<keyof ResDataType, number>;
+      total: number;
+    }, ReqDataType>('/query.json', 'POST', {
+      params: {
+        ...options?.params, sqlCode, params: options?.params
+      } as ReqDataType,
+      cache: options?.cache,
+      loading: options?.loading
+    });
+    return res.records;
+  }
+
+  async $upload<ResDataType = any, ReqDataType = Record<string, any>>(
+    url: string,
+    options: UploadOption
+  ): Promise<ResDataType> {
+    const formData = new FormData();
+    formData.append(options.fileParamName, options.file, options.fileName);
+    if (options.data) {
+      // eslint-disable-next-line guard-for-in
+      for (const key in options.data) {
+        formData.append(key, options.data[key]);
       }
-      await sleep(100);
-      return config;
-    },
-    error => Promise.reject(error)
-  );
-  instance.interceptors.response.use(
-    response => response,
-    error => Promise.reject(error)
-  );
-  (globalThis as any)[axiosInstance] = instance;
-  // 创建请求管理器实例
-  (globalThis as any)[requestManager] = new RequestManager();
-  // 定期清理过期缓存（每10秒钟执行一次）
-  setInterval(() => ((globalThis as any)[requestManager] as RequestManager).cleanup(), 10 * 1000);
-}
-export const $post = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => ((globalThis as any)[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options);
-export const $get = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => ((globalThis as any)[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'GET', options);
-export const $delete = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => ((globalThis as any)[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'DELETE', options);
-export const $put = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => ((globalThis as any)[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'PUT', options);
-export const $query = async <ResDataType = any, ReqDataType = Record<string, any>>(sqlCode: string, options?: RequestOption<ReqDataType>): Promise<ResDataType[]> => {
-  const res = await ((globalThis as any)[requestManager] as RequestManager).execute<{
-    records: ResDataType[];
-    size: number;
-    sum: Record<keyof ResDataType, number>;
-    total: number;
-  }, ReqDataType>('/query.json', 'POST', {
-    params: {
-      ...options?.params, sqlCode, params: options?.params
-    } as ReqDataType,
-    cache: options?.cache,
-    loading: options?.loading
-  });
-  return res.records;
-};
-export const $upload = async <ResDataType = any, ReqDataType = Record<string, any>>(
-  url: string,
-  options: {
-    data?: Record<string, any>;
-    file: Blob;
-    fileParamName: string;
-    fileName?: string;
-    loading?: Record<string, any>;
-  }
-): Promise<ResDataType> => {
-  const formData = new FormData();
-  formData.append(options.fileParamName, options.file, options.fileName);
-  if (options.data) {
-    // eslint-disable-next-line guard-for-in
-    for (const key in options.data) {
-      formData.append(key, options.data[key]);
     }
+    return await this.manager.execute<ResDataType, ReqDataType>(url, 'POST', options, {
+      formData,
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
   }
-  return await ((globalThis as any)[requestManager] as RequestManager).execute<ResDataType, ReqDataType>(url, 'POST', options, {
-    formData,
-    headers: { 'Content-Type': 'multipart/form-data' }
-  });
+
+  $sse(options: SSEOptions): { eventSource: EventSource; close: () => void } {
+    let url = options.url;
+    if (this.options.transformUrl) {
+      url = this.options.transformUrl(url);
+    }
+    // 拼接参数
+    if (options.params) {
+      const search = new URLSearchParams(options.params as any).toString();
+      url += (url.includes('?') ? '&' : '?') + search;
+    }
+    // 拼接 baseUrl
+    if (this.options.baseUrl && !/^https?:/.test(url)) {
+      url = this.options.baseUrl.replace(/\/$/, '') + (url.startsWith('/') ? url : '/' + url);
+    }
+    // 拼接token
+    if (options.withToken !== false && this.options.getToken) {
+      const token = this.options.getToken();
+      if (token) {
+        url += (url.includes('?') ? '&' : '?') + encodeURIComponent(this.options.tokenName ?? 'devid') + '=' + encodeURIComponent(token);
+      }
+    }
+    const es = new EventSource(url, { withCredentials: true });
+    es.onmessage = options.onMessage;
+    if (options.onError) es.onerror = options.onError;
+    if (options.onOpen) es.onopen = options.onOpen;
+    const close = () => {
+      es.close();
+      if (options.onClose) options.onClose();
+    };
+    return { eventSource: es, close };
+  }
+
+  $cache = {
+    clear: () => this.manager.clear(),
+    delete: (key: string) => this.manager.delete(key),
+    getStats: () => this.manager.getStats(),
+    cleanup: () => this.manager.cleanup(),
+    clearPending: () => this.manager.clearPending(),
+    getPendingStats: () => this.manager.getPendingStats()
+  }
+}
+export const SetUp = (bajaConfig: BajaElementOptions) => {
+  if (defaultInstance) {
+    defaultInstance.destroy();
+  }
+  defaultInstance = new BajaAxio(bajaConfig);
+  return defaultInstance;
 };
+export const $post = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => getDefaultInstance().$post<ResDataType, ReqDataType>(url, options);
+export const $get = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => getDefaultInstance().$get<ResDataType, ReqDataType>(url, options);
+export const $delete = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => getDefaultInstance().$delete<ResDataType, ReqDataType>(url, options);
+export const $put = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options?: RequestOption<ReqDataType>): Promise<ResDataType> => getDefaultInstance().$put<ResDataType, ReqDataType>(url, options);
+export const $query = async <ResDataType = any, ReqDataType = Record<string, any>>(sqlCode: string, options?: RequestOption<ReqDataType>): Promise<ResDataType[]> => getDefaultInstance().$query<ResDataType, ReqDataType>(sqlCode, options);
+export const $upload = async <ResDataType = any, ReqDataType = Record<string, any>>(url: string, options: UploadOption): Promise<ResDataType> => getDefaultInstance().$upload<ResDataType, ReqDataType>(url, options);
+export const $sse = (options: SSEOptions): { eventSource: EventSource, close: () => void } => getDefaultInstance().$sse(options);
 export const $cache = {
-  // 清空所有缓存
-  clear: () => ((globalThis as any)[requestManager] as RequestManager).clear(),
-  // 删除指定缓存
-  delete: (key: string) => ((globalThis as any)[requestManager] as RequestManager).delete(key),
-  // 获取缓存统计信息
-  getStats: () => ((globalThis as any)[requestManager] as RequestManager).getStats(),
-  // 清理过期缓存
-  cleanup: () => ((globalThis as any)[requestManager] as RequestManager).cleanup(),
-  // 清理pending请求
-  clearPending: () => ((globalThis as any)[requestManager] as RequestManager).clearPending(),
-  // 获取pending请求统计
-  getPendingStats: () => ((globalThis as any)[requestManager] as RequestManager).getPendingStats()
+  clear: () => getDefaultInstance().$cache.clear(),
+  delete: (key: string) => getDefaultInstance().$cache.delete(key),
+  getStats: () => getDefaultInstance().$cache.getStats(),
+  cleanup: () => getDefaultInstance().$cache.cleanup(),
+  clearPending: () => getDefaultInstance().$cache.clearPending(),
+  getPendingStats: () => getDefaultInstance().$cache.getPendingStats()
 };
-export interface SSEOptions {
-  url: string;
-  params?: Record<string, any>;
-  onMessage: (event: MessageEvent) => void;
-  onError?: (event: Event) => void;
-  onOpen?: (event: Event) => void;
-  onClose?: () => void;
-  withToken?: boolean;
-}
-/**
- * SSE请求封装
- * @returns 返回 EventSource 实例和关闭方法
- */
-export const $sse = function (options: SSEOptions): { eventSource: EventSource, close: () => void } {
-  const config = (globalThis as any)[GlobalAxiosOption] as BajaElementOptions;
-  let url = options.url;
-  if (config.transformUrl) {
-    url = config.transformUrl(url);
-  }
-  // 拼接参数
-  if (options.params) {
-    const search = new URLSearchParams(options.params as any).toString();
-    url += (url.includes('?') ? '&' : '?') + search;
-  }
-  // 拼接 baseUrl
-  if (config.baseUrl && !/^https?:/.test(url)) {
-    url = config.baseUrl.replace(/\/$/, '') + (url.startsWith('/') ? url : '/' + url);
-  }
-  // 拼接token
-  if (options.withToken !== false && config.getToken) {
-    const token = config.getToken();
-    if (token) {
-      url += (url.includes('?') ? '&' : '?') + encodeURIComponent(config.tokenName ?? 'devid') + '=' + encodeURIComponent(token);
-    }
-  }
-  const es = new EventSource(url, { withCredentials: true });
-  es.onmessage = options.onMessage;
-  if (options.onError) es.onerror = options.onError;
-  if (options.onOpen) es.onopen = options.onOpen;
-  const close = () => {
-    es.close();
-    if (options.onClose) options.onClose();
-  };
-  return { eventSource: es, close };
-}
