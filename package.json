@@ -22,10 +22,10 @@
     "dist": "node ./ci.js"
   },
   "devDependencies": {
-    "axios": "1.14.0",
-    "@types/node": "25.0.10",
+    "axios": "1.15.2",
+    "@types/node": "25.6.0",
     "shelljs": "0.10.0",
-    "typescript": "5.9.3"
+    "typescript": "6.0.3"
   },
   "engines": {
     "node": ">=20"
